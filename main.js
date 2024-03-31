@@ -176,15 +176,20 @@ const state = webgl.state(() => {
 	]));
 });
 
+let N = 1;
+element.onclick = () => ++N;
+
 animate(webgl, (t, dt) => {
 	t *= 0.5;
 	const c3 = Math.cos(3*t), s3 = Math.sin(3*t);
 	const c5 = Math.cos(5*t), s5 = Math.sin(5*t);
-	webgl.uniform(program, "transform", "uniformMatrix4fv", [
-		c3,s3,0,0,
-		-s3,c3*c5,s5,0,
-		0,-s5,c5,0,
-		0,0,0,1,
-	]);
-	webgl.draw(program, state, 3);
+	for (let i=0; i<N*N; ++i) {
+		webgl.uniform(program, "transform", "uniformMatrix4fv", [
+			c3,s3,0,0,
+			-s3,c3*c5,s5,0,
+			0,-s5,c5,0,
+			i%N-0.5*(N-1),((i/N)|0)-0.5*(N-1),0,0.5+0.5*N,
+		]);
+		webgl.draw(program, state, 3);
+	}
 });
