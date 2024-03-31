@@ -10,6 +10,10 @@ const createOffscreenCanvas = (w, h) => {
 	e.width = w; e.height = h;
 	return e;
 };
+const ShaderType = {
+	FRAGMENT: WebGL2RenderingContext.prototype.FRAGMENT_SHADER,
+	VERTEX: WebGL2RenderingContext.prototype.VERTEX_SHADER,
+};
 class WebGL {
 	constructor(element, width, height, scaling=1) {
 		this.element = element
@@ -30,44 +34,11 @@ class WebGL {
 		this.gl = this.backbuffer.getContext("webgl2");
 		ASSERT(this.gl);
 		this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
-		const vertexShader = this.shader(this.gl.VERTEX_SHADER, `
-			uniform mat4 transform;
-			in vec4 a_position;
-			in vec4 a_color;
-			out vec4 v_color;
-			void main() {
-				gl_Position = transform * a_position;
-				v_color = a_color;
-			}
-		`);
-		const pixelShader = this.shader(this.gl.FRAGMENT_SHADER, `
-			precision highp float;
-			out vec4 o_color;
-			in vec4 v_color;
-			void main() {
-				o_color = v_color;
-			}
-		`);
 		//this.gl.enable(this.gl.CULL_FACE);
 		//this.gl.cullFace(this.gl.BACK);
-		this.program([
-			pixelShader,
-			vertexShader,
-		]);
-		const alpha = (-1/6)*Math.sqrt(3);
-		this.buffer("a_position", 2, new Float32Array([
-			0, -2*alpha,
-			-0.5, alpha,
-			0.5, alpha,
-		]));
-		this.buffer("a_color", 3, new Float32Array([
-			1, 0, 0,
-			0, 1, 0,
-			0, 0, 1,
-		]));
 	}
 	program(shaders) {
-		const program = this.program = this.gl.createProgram();
+		const program = this.gl.createProgram();
 		for (const shader of shaders) {
 			this.gl.attachShader(program, shader);
 		}
@@ -75,10 +46,13 @@ class WebGL {
 		if (!this.gl.getProgramParameter(program, this.gl.LINK_STATUS)) {
 			throw new Error(this.gl.getProgramInfoLog(program));
 		}
-		this.gl.useProgram(program);
-		this.vao = this.gl.createVertexArray();
-		this.gl.bindVertexArray(this.vao);
 		return program;
+	}
+	state(chunk) {
+		const state = this.gl.createVertexArray();
+		this.gl.bindVertexArray(state);
+		chunk();
+		return state;
 	}
 	shader(type, source) {
 		const shader = this.gl.createShader(type);
@@ -86,14 +60,29 @@ class WebGL {
 		this.gl.compileShader(shader);
 		return shader;
 	}
-	buffer(name, size, data) {
+	buffer(program, name, size, data) {
 		const buffer = this.gl.createBuffer();
 		this.gl.bindBuffer(this.gl.ARRAY_BUFFER, buffer);
-		const location = this.gl.getAttribLocation(this.program, name);
+		const location = this.gl.getAttribLocation(program, name);
 		this.gl.enableVertexAttribArray(location);
 		this.gl.vertexAttribPointer(location, size, this.gl.FLOAT, false, 0, 0);
 		this.gl.bufferData(this.gl.ARRAY_BUFFER, data, this.gl.STATIC_DRAW);
 		return buffer;
+	}
+	uniform(program, name, setter, value) {
+		this.gl.useProgram(program);
+		const location = this.gl.getUniformLocation(program, name);
+		ASSERT(location !== null);
+		if (setter.startsWith("uniformMatrix")) {
+			this.gl[setter](location, false, value);
+		} else {
+			this.gl[setter](location, value);
+		}
+	}
+	draw(program, state, count, start=0, mode=this.gl.TRIANGLES) {
+		this.gl.useProgram(program);
+		this.gl.bindVertexArray(state);
+		this.gl.drawArrays(mode, start, count);
 	}
 	clear() {
 		this.gl.clearColor(0, 0, 0, 0);
@@ -103,18 +92,6 @@ class WebGL {
 		this.context.clearRect(0, 0, self.width, self.height);
 	}
 	present(t, dt) {
-		t *= 0.5;
-		const transform = this.gl.getUniformLocation(this.program, "transform");
-		const c3 = Math.cos(3*t), s3 = Math.sin(3*t);
-		const c5 = Math.cos(5*t), s5 = Math.sin(5*t);
-		this.gl.uniformMatrix4fv(transform, false,
-			[
-				c3,s3,0,0,
-				-s3,c3*c5,s5,0,
-				0,-s5,c5,0,
-				0,0,0,1,
-			]);
-		this.gl.drawArrays(this.gl.TRIANGLES, 0, 3);
 		this.context.drawImage(this.backbuffer, 0, 0);
 		const fps = 1000 / this.debugAvgDt;
 		this.debugAvgDt = 0.9*this.debugAvgDt + 0.1*dt;
@@ -146,11 +123,7 @@ class WebGL {
 		this.debugTexts.push(text);
 	}
 }
-
-const element = document.getElementById("renderer");
-const webgl = new WebGL(element, 600, 600, 1);
-
-const animate = (chunk) => {
+const animate = (webgl, chunk) => {
 	return new Promise((_, reject) => {
 		let dt = 1000/60;
 		requestAnimationFrame(function tick() {
@@ -168,5 +141,50 @@ const animate = (chunk) => {
 	});
 };
 
-animate((_, dt) => {
+const element = document.getElementById("renderer");
+const webgl = new WebGL(element, 600, 600, 1);
+const vertexShader = webgl.shader(ShaderType.VERTEX, `
+	uniform mat4 transform;
+	in vec4 a_position;
+	in vec4 a_color;
+	out vec4 v_color;
+	void main() {
+		gl_Position = transform * a_position;
+		v_color = a_color;
+	}
+`);
+const pixelShader = webgl.shader(ShaderType.FRAGMENT, `
+	precision highp float;
+	out vec4 o_color;
+	in vec4 v_color;
+	void main() {
+		o_color = v_color;
+	}
+`);
+const program = webgl.program([pixelShader, vertexShader]);
+const state = webgl.state(() => {
+	const rho = (-1/6)*Math.sqrt(3);
+	webgl.buffer(program, "a_position", 2, new Float32Array([
+		0, -2*rho,
+		-0.5, rho,
+		0.5, rho,
+	]));
+	webgl.buffer(program, "a_color", 3, new Float32Array([
+		1, 0, 0,
+		0, 1, 0,
+		0, 0, 1,
+	]));
+});
+
+animate(webgl, (t, dt) => {
+	t *= 0.5;
+	const c3 = Math.cos(3*t), s3 = Math.sin(3*t);
+	const c5 = Math.cos(5*t), s5 = Math.sin(5*t);
+	webgl.uniform(program, "transform", "uniformMatrix4fv", [
+		c3,s3,0,0,
+		-s3,c3*c5,s5,0,
+		0,-s5,c5,0,
+		0,0,0,1,
+	]);
+	webgl.draw(program, state, 3);
 });
