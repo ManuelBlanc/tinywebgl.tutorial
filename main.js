@@ -2,6 +2,14 @@
 const ASSERT = (cond) => {
 	if (!cond) throw new Error("assertion failed!");
 };
+const createOffscreenCanvas = (w, h) => {
+	if (window.OffscreenCanvas) {
+		return new OffscreenCanvas(w, h);
+	}
+	const e = document.createElement("canvas");
+	e.width = w; e.height = h;
+	return e;
+};
 class WebGL {
 	constructor(element, width, height, scaling=1) {
 		this.element = element
@@ -10,42 +18,49 @@ class WebGL {
 		element.style.width  = `${scaling * this.width }px`;
 		element.style.height = `${scaling * this.height}px`;
 		element.style.backgroundColor = "black";
+		element.style.imageRendering = "pixelated";
 		this.scaling = scaling;
-		this.preserveDrawingBuffer = false; // To be able to Save Image As...
-		this.gl = this.element.getContext("webgl2", {
-			preserveDrawingBuffer: this.preserveDrawingBuffer,
-		});
+		this.context = this.element.getContext("2d");
+		this.debugInfo = true;
+		this.debugFontSize = 22;
+		this.debugTexts = [];
+		this.debugAvgDt = 0;
+		this.debugDts = new Array(120).fill(0);
+		this.backbuffer = createOffscreenCanvas(this.width, this.height);
+		this.gl = this.backbuffer.getContext("webgl2");
 		ASSERT(this.gl);
 		this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
 		const vertexShader = this.shader(this.gl.VERTEX_SHADER, `
 			uniform mat4 transform;
-			in vec4 in_position;
-			in vec4 in_color;
-			out vec4 color;
+			in vec4 a_position;
+			in vec4 a_color;
+			out vec4 v_color;
 			void main() {
-				gl_Position = transform * in_position;
-				color = in_color;
+				gl_Position = transform * a_position;
+				v_color = a_color;
 			}
 		`);
 		const pixelShader = this.shader(this.gl.FRAGMENT_SHADER, `
 			precision highp float;
-			out vec4 FragColor;
-			in vec4 color;
+			out vec4 o_color;
+			in vec4 v_color;
 			void main() {
-				FragColor = color;
+				o_color = v_color;
 			}
 		`);
+		//this.gl.enable(this.gl.CULL_FACE);
+		//this.gl.cullFace(this.gl.BACK);
 		this.program([
 			pixelShader,
 			vertexShader,
 		]);
-		const cos60 = -0.5, sin60 = -0.5*Math.sqrt(3);
-		this.buffer("in_position", 2, new Float32Array([
-			0, sin60 -sin60*1/3,
-			cos60, -sin60*1/3,
-			-cos60, -sin60*1/3,
+		const alpha = (-1/6)*Math.sqrt(3);
+		this.buffer("a_position", 2, new Float32Array([
+			0, -2*alpha,
+			-0.5, alpha,
+			0.5, alpha,
 		]));
-		this.buffer("in_color", 3, new Float32Array([
+		this.buffer("a_color", 3, new Float32Array([
 			1, 0, 0,
 			0, 1, 0,
 			0, 0, 1,
@@ -81,27 +96,54 @@ class WebGL {
 		return buffer;
 	}
 	clear() {
-		if (this.preserveDrawingBuffer) {
-			this.gl.clearColor(0, 0, 0, 0);
-			this.gl.clear(this.gl.COLOR_BUFFER_BIT);
-		}
+		this.gl.clearColor(0, 0, 0, 0);
+		this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+		this.context.fillStyle = "#000";
+		this.context.fillRect(0, 0, this.width, this.height);
+		this.context.clearRect(0, 0, self.width, self.height);
 	}
-	set() { // Todo.
-	}
-	present(t) {
+	present(t, dt) {
 		t *= 0.5;
 		const transform = this.gl.getUniformLocation(this.program, "transform");
-		const c = Math.cos(t), s = Math.sin(t);
+		const c3 = Math.cos(3*t), s3 = Math.sin(3*t);
+		const c5 = Math.cos(5*t), s5 = Math.sin(5*t);
 		this.gl.uniformMatrix4fv(transform, false,
 			[
-				c,s,0,0,
-				-s,c,0,0,
-				0,0,1,0,
+				c3,s3,0,0,
+				-s3,c3*c5,s5,0,
+				0,-s5,c5,0,
 				0,0,0,1,
 			]);
 		this.gl.drawArrays(this.gl.TRIANGLES, 0, 3);
+		this.context.drawImage(this.backbuffer, 0, 0);
+		const fps = 1000 / this.debugAvgDt;
+		this.debugAvgDt = 0.9*this.debugAvgDt + 0.1*dt;
+		this.debugDts.pop();
+		this.debugDts.unshift(dt);
+		if (this.debugInfo) {
+			for (let i=0; i < this.debugDts.length; ++i) {
+				const dt = this.debugDts[i]/1000;
+				const v = Math.max(0, Math.min(1, (dt-1/60)/(1/30-1/60)));
+				const j = Math.floor(1000*dt);
+				this.context.fillStyle = `rgb(${255*v},${255*(1-v)},${255-255/30*j})`;
+				this.context.fillRect(this.width-10-i, 10, 1, j)
+			}
+			this.debugText(`${fps.toFixed(0).padStart(3)} FPS`);
+			this.debugText(`${this.debugAvgDt.toFixed(3).padStart(6)} ms`);
+		}
+		if (this.debugTexts.length > 0) {
+			this.context.fillStyle = "#00ff00";
+			this.context.font = `${this.debugFontSize/this.scaling}px monospace`;
+			for (let i=0; i < this.debugTexts.length; ++i) {
+				const x = 10, y = 5 + (1+i)*this.debugFontSize;
+				const text = this.debugTexts[i];
+				this.context.fillText(text, x/this.scaling, y/this.scaling);
+			}
+			this.debugTexts.length = 0;
+		}
 	}
-	debugText() { // Todo. 
+	debugText(text) {
+		this.debugTexts.push(text);
 	}
 }
 
@@ -116,7 +158,7 @@ const animate = (chunk) => {
 				const t = performance.now();
 				webgl.clear();
 				chunk(t/1000, dt);
-				webgl.present(t/1000);
+				webgl.present(t/1000, dt);
 				requestAnimationFrame(tick);
 				dt = performance.now() - t;
 			} catch (err) {
@@ -126,19 +168,5 @@ const animate = (chunk) => {
 	});
 };
 
-let avgDT = 0;
-const dts = new Array(120).fill(0);
 animate((_, dt) => {
-	const fps = 1000 / avgDT;
-	avgDT = 0.9*avgDT + 0.1*dt;
-	dts.pop();
-	dts.unshift(dt);
-	for (let i=0; i < dts.length; ++i) {
-		const dt = dts[i]/1000;
-		const v = Math.max(0, Math.min(1, (dt-1/60)/(1/30-1/60)));
-		let j = Math.floor(1000*dt);
-		while (j --> 0) webgl.set(webgl.width-10-i, 10+j, [255*v,255*(1-v),255-255/30*j,255]);
-	}
-	webgl.debugText(`${fps.toFixed(0).padStart(3)} FPS`);
-	webgl.debugText(`${avgDT.toFixed(3).padStart(6)} ms`);
 });
