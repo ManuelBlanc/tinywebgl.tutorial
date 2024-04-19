@@ -10,3 +10,7 @@ Learning about how OpenGL and GPU programming works.
 + https://registry.khronos.org/webgl/specs/latest/2.0/
 + https://registry.khronos.org/OpenGL/specs/es/3.0/es_spec_3.0.pdf
 + https://registry.khronos.org/OpenGL/specs/es/3.0/GLSL_ES_Specification_3.00.pdf
++ https://webglreport.com/?v=2
++ https://graphicscodex.courses.nvidia.com/app.html
++ https://www.realtimerendering.com/webgl.html
++ http://graphics.stanford.edu/data/3Dscanrep/

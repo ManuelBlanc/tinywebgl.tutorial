@@ -25,7 +25,7 @@ class WebGL {
 		element.style.imageRendering = "pixelated";
 		this.scaling = scaling;
 		this.context = this.element.getContext("2d");
-		this.debugInfo = true;
+		this.debugShow = true;
 		this.debugFontSize = 22;
 		this.debugTexts = [];
 		this.debugAvgDt = 0;
@@ -58,6 +58,12 @@ class WebGL {
 		const shader = this.gl.createShader(type);
 		this.gl.shaderSource(shader, "#version 300 es\n" + source);
 		this.gl.compileShader(shader);
+		if (!this.gl.getShaderParameter(shader, this.gl.COMPILE_STATUS)) {
+			throw new Error(this.gl.getShaderInfoLog(shader));
+		}
+		const ext = this.gl.getExtension("WEBGL_debug_shaders");
+		const translated = ext ? ext.getTranslatedShaderSource(shader) : "";
+		console.log(translated);
 		return shader;
 	}
 	buffer(program, name, size, data) {
@@ -97,7 +103,7 @@ class WebGL {
 		this.debugAvgDt = 0.9*this.debugAvgDt + 0.1*dt;
 		this.debugDts.pop();
 		this.debugDts.unshift(dt);
-		if (this.debugInfo) {
+		if (this.debugShow) {
 			for (let i=0; i < this.debugDts.length; ++i) {
 				const dt = this.debugDts[i]/1000;
 				const v = Math.max(0, Math.min(1, (dt-1/60)/(1/30-1/60)));
@@ -121,6 +127,19 @@ class WebGL {
 	}
 	debugText(text) {
 		this.debugTexts.push(text);
+	}
+	debugInfo() {
+		const precisionTypes = ["LOW_FLOAT", "MEDIUM_FLOAT", "HIGH_FLOAT", "LOW_INT", "MEDIUM_INT", "HIGH_INT"];
+		for (const type of precisionTypes) {
+			const {rangeMin, rangeMax, precision} = this.gl.getShaderPrecisionFormat(this.gl.FRAGMENT_SHADER, this.gl[type]);
+			console.log(`${type.padStart(12)} := WebGLShaderPrecisionFormat { -${rangeMin}, ${rangeMax}, ${precision} }`);
+		}
+		console.log(`Renderer: ${this.gl.getParameter(this.gl.RENDERER)}`);
+		const ext = this.gl.getExtension("WEBGL_debug_renderer_info");
+		if (ext) {
+			console.log(`Unmasked Vendor: ${this.gl.getParameter(ext.UNMASKED_VENDOR_WEBGL)}`);
+			console.log(`Unmasled Renderer: ${this.gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)}`);
+		}
 	}
 }
 const animate = (webgl, chunk) => {
@@ -175,6 +194,8 @@ const state = webgl.state(() => {
 		0, 0, 1,
 	]));
 });
+
+webgl.debugInfo();
 
 let N = 1;
 element.onclick = () => ++N;
